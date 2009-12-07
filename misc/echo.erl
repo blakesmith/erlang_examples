@@ -3,8 +3,10 @@
 
 -define(TCP_OPTIONS, [list, {packet, 0}, {active, false}, {reuseaddr, true}]).
 
+-record(player, {name=none, socket, mode}).
+
 listen(Port) ->
-	register(client_manager, spawn(fun() -> manage_clients([]) end)),
+	register(client_manager, spawn(fun() -> maintain_clients([]) end)),
 	{ok, LSocket} = gen_tcp:listen(Port, ?TCP_OPTIONS),
 	do_accept(LSocket).
 
@@ -17,28 +19,67 @@ do_accept(LSocket) ->
 handle_client(Socket) ->
 	case gen_tcp:recv(Socket, 0) of
 		{ok, Data} ->
-			client_manager ! {data, Data},
+			client_manager ! {data, Socket, Data},
 			handle_client(Socket);
 		{error, closed} ->
 			client_manager ! {disconnect, Socket}
 	end.
 
-manage_clients(Sockets) ->
+maintain_clients(Players) ->
+	io:fwrite("Players:~n"),
+	lists:foreach(fun(P) -> io:fwrite(">>> ~w~n", [P]) end, Players),
 	receive
 		{connect, Socket} ->
-			io:fwrite("Socket connected: ~w~n", [Socket]),
-			NewSockets = [Socket|Sockets];
+			Player = #player{socket=Socket, mode=connect},
+			send_prompt(Player),
+			io:fwrite("client connected: ~w~n", [Player]),
+			NewPlayers = [Player|Players];
 		{disconnect, Socket} ->
-			io:fwrite("Socket disconnected: ~w~n", [Socket]),
-			NewSockets = lists:delete(Socket, Sockets);
-		{data, Data} ->
-			send_data(Sockets, Data),
-			NewSockets = Sockets
-		end,
-	manage_clients(NewSockets).
+			Player = find_player(Socket, Players),
+			io:fwrite("client disconnected: ~w~n", [Player]),
+			NewPlayers = lists:delete(Player, Players);
+		{data, Socket, Data} ->
+			Player = find_player(Socket, Players),
+			NewPlayers = parse_data(Player, Players, Data),
+			NewPlayer = find_player(Socket, NewPlayers),
+			send_prompt(NewPlayer)
+	end,
+	maintain_clients(NewPlayers).
 
-send_data(Sockets, Data) ->
-	SendData = fun(Socket) ->
-			gen_tcp:send(Socket, Data)
-		   end,
-	lists:foreach(SendData, Sockets).
+find_player(Socket, Players) ->
+	{value, Player} = lists:keysearch(Socket, #player.socket, Players),
+	Player.
+
+delete_player(Player, Players) ->
+	lists:keydelete(Player#player.socket, #player.socket, Players).
+
+send_prompt(Player) ->
+	case Player#player.mode of
+		connect ->
+			gen_tcp:send(Player#player.socket, "Name: ");
+		active ->
+			ok
+	end.
+
+send_to_active(Prefix, Players, Data) ->
+	ActivePlayers = lists:filter(fun(P) -> P#player.mode == active end, Players),
+	lists:foreach(fun(P) -> gen_tcp:send(P#player.socket, Prefix ++ Data) end, ActivePlayers),
+	ok.
+
+parse_data(Player, Players, Data) ->
+	case Player#player.mode of
+		active ->
+			send_to_active(Player#player.name ++ ": ",
+				delete_player(Player, Players), Data),
+			Players;
+		connect ->
+			UPlayer = Player#player{name=bogostrip(Data), mode=active},
+			[UPlayer|delete_player(Player, Players)]
+	end.
+
+bogostrip(String) ->
+	bogostrip(String, "\r\n\t ").
+
+bogostrip(String, Chars) ->
+	[Stripped|_Rest] = string:tokens(String, Chars),
+	Stripped.
