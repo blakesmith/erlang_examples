@@ -70,7 +70,7 @@ parse_data(Player, Players, Data) ->
 	case Player#player.mode of
 		active ->
 			send_to_active(Player#player.name ++ ": ",
-				delete_player(Player, Players), Data),
+				Players, Data),
 			Players;
 		connect ->
 			UPlayer = Player#player{name=bogostrip(Data), mode=active},
