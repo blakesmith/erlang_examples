@@ -4,19 +4,41 @@
 -define(TCP_OPTIONS, [list, {packet, 0}, {active, false}, {reuseaddr, true}]).
 
 listen(Port) ->
+	register(client_manager, spawn(fun() -> manage_clients([]) end)),
 	{ok, LSocket} = gen_tcp:listen(Port, ?TCP_OPTIONS),
 	do_accept(LSocket).
 
 do_accept(LSocket) ->
 	{ok, Socket} = gen_tcp:accept(LSocket),
-	spawn(fun() -> do_echo(Socket) end),
+	spawn(fun() -> handle_client(Socket) end),
+	client_manager ! {connect, Socket},
 	do_accept(LSocket).
 
-do_echo(Socket) ->
+handle_client(Socket) ->
 	case gen_tcp:recv(Socket, 0) of
 		{ok, Data} ->
-			gen_tcp:send(Socket, Data),
-			do_echo(Socket);
+			client_manager ! {data, Data},
+			handle_client(Socket);
 		{error, closed} ->
-			ok
+			client_manager ! {disconnect, Socket}
 	end.
+
+manage_clients(Sockets) ->
+	receive
+		{connect, Socket} ->
+			io:fwrite("Socket connected: ~w~n", [Socket]),
+			NewSockets = [Socket|Sockets];
+		{disconnect, Socket} ->
+			io:fwrite("Socket disconnected: ~w~n", [Socket]),
+			NewSockets = lists:delete(Socket, Sockets);
+		{data, Data} ->
+			send_data(Sockets, Data),
+			NewSockets = Sockets
+		end,
+	manage_clients(NewSockets).
+
+send_data(Sockets, Data) ->
+	SendData = fun(Socket) ->
+			gen_tcp:send(Socket, Data)
+		   end,
+	lists:foreach(SendData, Sockets).
