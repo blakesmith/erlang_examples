@@ -5,8 +5,12 @@
 
 listen(Port) ->
 	{ok, LSocket} = gen_tcp:listen(Port, ?TCP_OPTIONS),
+	do_accept(LSocket).
+
+do_accept(LSocket) ->
 	{ok, Socket} = gen_tcp:accept(LSocket),
-	do_echo(Socket).
+	spawn(fun() -> do_echo(Socket) end),
+	do_accept(LSocket).
 
 do_echo(Socket) ->
 	case gen_tcp:recv(Socket, 0) of
